@@ -90,7 +90,7 @@ void main() {
     particle.xy += dir * force * 0.04 ;
 
     // --- DECAY ---
-    particle.a += 0.03;
+    particle.a += 0.02;
     }
 
     gl_FragColor = particle;

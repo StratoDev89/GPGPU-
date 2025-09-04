@@ -88,6 +88,7 @@ export default class GLApp {
     mesh.position.set(0, 0, -0.2);
     this.scene.add(mesh);
 
+    this.mouseActive = false;
     window.addEventListener("mousemove", (event) => {
       mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
       mouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
@@ -98,6 +99,7 @@ export default class GLApp {
 
       if (intersects.length > 0) {
         this.mousePos3D.copy(intersects[0].point); // posición 3D
+        this.mouseActive = true;
       }
     });
   }
@@ -200,8 +202,8 @@ export default class GLApp {
     this.gpu.particlesVariable.material.uniforms.uTime = new THREE.Uniform(0);
     this.gpu.particlesVariable.material.uniforms.uDeltaTime = new THREE.Uniform(0);
     this.gpu.particlesVariable.material.uniforms.uBase = new THREE.Uniform(this.baseParticlesTexture);
-    this.gpu.particlesVariable.material.uniforms.uMouse = new THREE.Uniform(new THREE.Vector3(-3, -3, 0));
-    this.gpu.particlesVariable.material.uniforms.uPrevMouse = new THREE.Uniform(new THREE.Vector3(0, 0, 0));
+    this.gpu.particlesVariable.material.uniforms.uMouse = new THREE.Uniform(new THREE.Vector3(10.0, 10.0, 0.0));
+    // this.gpu.particlesVariable.material.uniforms.uPrevMouse = new THREE.Uniform(new THREE.Vector3(0, 0, 0));
 
     // Esto define qué otras variables necesita este shader como input, En este caso, "uParticles" depende de sí misma,
     // para calcular el nuevo estado de las partículas, necesito el estado anterior de esas mismas partículas
@@ -274,11 +276,11 @@ export default class GLApp {
       this.renderer.render(this.scene, this.camera);
 
       this.gpu.particlesVariable.material.uniforms.uTime.value = elapsedTime;
-      this.gpu.particlesVariable.material.uniforms.uPrevMouse.value.copy(this.gpu.particlesVariable.material.uniforms.uMouse.value);
+      // this.gpu.particlesVariable.material.uniforms.uPrevMouse.value.copy(this.gpu.particlesVariable.material.uniforms.uMouse.value);
 
-     
-
-      this.gpu.particlesVariable.material.uniforms.uMouse.value.copy(this.mousePos3D);
+      if (this.mouseActive) {
+        this.gpu.particlesVariable.material.uniforms.uMouse.value.copy(this.mousePos3D);
+      }
 
       this.gpu.particlesVariable.material.uniforms.uDeltaTime.value = deltaTime;
 
