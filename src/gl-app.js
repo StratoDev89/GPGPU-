@@ -19,7 +19,7 @@ export default class GLApp {
 
     // BASE GEOMETRY
     this.baseGeometry = {};
-    this.baseGeometry.instance = new THREE.SphereGeometry(3, 90, 90);
+    this.baseGeometry.instance = new THREE.SphereGeometry(3, 120, 120);
     this.baseGeometry.count = this.baseGeometry.instance.attributes.position.count;
 
     this.updatables = [];
@@ -46,6 +46,61 @@ export default class GLApp {
 
     // RESIZE
     window.addEventListener("resize", this.onResize.bind(this), false);
+
+    const raycaster = new THREE.Raycaster();
+    const mouse = new THREE.Vector2();
+    this.mousePos3D = new THREE.Vector3();
+
+    // Suponiendo que tienes un plano o malla que cubre tus partículas
+    const plane = new THREE.Mesh(
+      new THREE.PlaneGeometry(10, 10), // del tamaño de tu sim
+      new THREE.MeshBasicMaterial({ visible: false }) // invisible
+    );
+    plane.position.set(0, 0, -2);
+    this.scene.add(plane);
+
+    const material = new THREE.ShaderMaterial({
+      uniforms: {
+        colorCenter: { value: new THREE.Color(0xffcba4) }, // color visible
+      },
+      vertexShader: `
+        varying vec2 vUv;
+        void main() {
+          vUv = uv * 2.0 - 1.0; // mapear UV de [0,1] a [-1,1]
+          gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+        }
+      `,
+      fragmentShader: `
+        uniform vec3 colorCenter;
+        varying vec2 vUv;
+        void main() {
+          float dist = length(vUv); // distancia al centro
+          if(dist > 1.0) discard;  // fuera del círculo
+          float alpha = 1.0 - clamp(dist, 0.0, 1.0); // 1 en el centro, 0 en el borde
+          gl_FragColor = vec4(colorCenter, alpha);
+        }
+      `,
+      side: THREE.DoubleSide,
+      transparent: true, // esencial para que funcione la transparencia
+    });
+
+    const mesh = new THREE.Mesh(new THREE.PlaneGeometry(6, 6, 1, 1), material);
+    mesh.position.set(0, 0, -0.2);
+    this.scene.add(mesh);
+
+    window.addEventListener("mousemove", (event) => {
+      mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
+      mouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
+      
+
+      raycaster.setFromCamera(mouse, camera);
+      const intersects = raycaster.intersectObject(plane);
+
+      if (intersects.length > 0) {
+        this.mousePos3D.copy(intersects[0].point); // posición 3D
+        console.log(this.mousePos3D);
+      }
+    });
   }
 
   setPerspectiveCamera() {
@@ -102,7 +157,7 @@ export default class GLApp {
       fragmentShader: particlesFragment,
       wireframe: true,
       uniforms: {
-        uSize: new THREE.Uniform(0.01),
+        uSize: new THREE.Uniform(0.013),
         uResolution: new THREE.Uniform(new THREE.Vector2(this.sizes.width * this.sizes.pixelRatio, this.sizes.height * this.sizes.pixelRatio)),
         uParticlesTexture: new THREE.Uniform(this.baseParticlesTexture),
       },
@@ -122,7 +177,7 @@ export default class GLApp {
     // creamos el renderer de la GPU
     this.gpu.computationRenderer = new GPUComputationRenderer(this.gpu.sizes, this.gpu.sizes, this.renderer);
 
-    // creamos la textura base para la GPU SEra usada tambien para reinicar las posciones 
+    // creamos la textura base para la GPU SEra usada tambien para reinicar las posciones
     this.baseParticlesTexture = this.gpu.computationRenderer.createTexture();
 
     // aqui llenamos la textura con los valores de la geometria. se ecnuentran dentro de la textura - image.data
@@ -133,9 +188,9 @@ export default class GLApp {
 
       this.baseParticlesTexture.image.data[i4] = this.baseGeometry.instance.attributes.position.array[i3];
       this.baseParticlesTexture.image.data[i4 + 1] = this.baseGeometry.instance.attributes.position.array[i3 + 1];
-      this.baseParticlesTexture.image.data[i4 + 2] = this.baseGeometry.instance.attributes.position.array[i3 + 2];
-      
-      // lo hacemos ramdom para poder usarlo en la vida de la particula 
+      this.baseParticlesTexture.image.data[i4 + 2] = this.baseGeometry.instance.attributes.position.array[i3 + 2] * 0;
+
+      // lo hacemos ramdom para poder usarlo en la vida de la particula
       this.baseParticlesTexture.image.data[i4 + 3] = Math.random();
     }
 
@@ -146,7 +201,8 @@ export default class GLApp {
     this.gpu.particlesVariable.material.uniforms.uTime = new THREE.Uniform(0);
     this.gpu.particlesVariable.material.uniforms.uDeltaTime = new THREE.Uniform(0);
     this.gpu.particlesVariable.material.uniforms.uBase = new THREE.Uniform(this.baseParticlesTexture);
-
+    this.gpu.particlesVariable.material.uniforms.uMouse = new THREE.Uniform(new THREE.Vector3(-3, -3, 0));
+    this.gpu.particlesVariable.material.uniforms.uPrevMouse = new THREE.Uniform(new THREE.Vector3(0, 0, 0));
 
     // Esto define qué otras variables necesita este shader como input, En este caso, "uParticles" depende de sí misma,
     // para calcular el nuevo estado de las partículas, necesito el estado anterior de esas mismas partículas
@@ -162,7 +218,7 @@ export default class GLApp {
       })
     );
     this.gpu.debug.position.set(4, 0, 0);
-    this.scene.add(this.gpu.debug);
+    // this.scene.add(this.gpu.debug);
 
     return this;
   }
@@ -219,6 +275,12 @@ export default class GLApp {
       this.renderer.render(this.scene, this.camera);
 
       this.gpu.particlesVariable.material.uniforms.uTime.value = elapsedTime;
+      this.gpu.particlesVariable.material.uniforms.uPrevMouse.value.copy(this.gpu.particlesVariable.material.uniforms.uMouse.value);
+
+     
+
+      this.gpu.particlesVariable.material.uniforms.uMouse.value.copy(this.mousePos3D);
+
       this.gpu.particlesVariable.material.uniforms.uDeltaTime.value = deltaTime;
 
       // Update GPU
