@@ -98,7 +98,6 @@ export default class GLApp {
 
       if (intersects.length > 0) {
         this.mousePos3D.copy(intersects[0].point); // posición 3D
-        console.log(this.mousePos3D);
       }
     });
   }
