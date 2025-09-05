@@ -1,97 +1,119 @@
+// =======================================
+//  GPGPU Shader - Simulación de partículas
+// =======================================
+// Cada fragmento corresponde a 1 partícula (almacenada en textura)
+//
+//  - Se inicializa en la textura base (uBase)
+//  - Se actualiza en cada frame con ruido simplex (flow field),
+//    deformaciones orgánicas, atracción/repulsión con el mouse, etc.
+//
+// =======================================
+
 #include ../includes/simplexNoise4d.glsl
 
-uniform float uTime;
-uniform float uDeltaTime;
-uniform sampler2D uBase;
-uniform vec3 uMouse; 
-uniform vec3 uPrevMouse; 
+// Uniforms
+uniform float uTime;        // tiempo global
+uniform float uDeltaTime;   // deltaTime entre frames
+uniform sampler2D uBase;    // textura base con posiciones originales
+uniform vec3 uMouse;        // posición del mouse en 3D
+uniform vec3 uPrevMouse;    // posición previa del mouse
 
-
-// distancia a un segmento (cápsula de radio r)
+// ===========================================================
+// Función auxiliar: distancia a un segmento (cápsula de radio r)
+// ===========================================================
 float sdCapsule(vec2 p, vec2 a, vec2 b, float r) {
     vec2 pa = p - a, ba = b - a;
-    float h = clamp(dot(pa,ba) / dot(ba,ba), 0.0, 1.0);
+    float h = clamp(dot(pa, ba) / dot(ba, ba), 0.0, 1.0);
     return length(pa - ba * h) - r;
 }
 
-
 void main() { 
-    float time = uTime ;
+    float time = uTime;
     vec2 mouse = uMouse.xy;
     vec2 prevMouse = uPrevMouse.xy;
 
-    // usamos el fragCord que es el pixel actual entre la resolucion 
-    // que es proporcionada por el gpgpu renderer 
-    // y calculamos los UV para poder mapear la textura
+    // =======================================
+    // UV de la partícula (coordenada del pixel)
+    // =======================================
     vec2 uv = gl_FragCoord.xy / resolution.xy;
 
+    // Estado actual de la partícula
     vec4 particle = texture2D(uParticles, uv);
+
+    // Posición original (sirve para resetear)
     vec4 base = texture2D(uBase, uv);
 
-
-    // DEAD 
+    // =======================================
+    // Re-spawn: si alpha >= 1, se reinicia
+    // =======================================
     if (particle.a >= 1.0) {
-        particle.a = mod(particle.a, 1.0);
-        particle.xyz = base.xyz;
+        particle.a = mod(particle.a, 1.0);   // reinicia vida
+        particle.xyz = base.xyz;             // vuelve a la posición inicial
     }
-
-    // ALIVE 
     else {
-    // STRENGTH 
-    float strength = simplexNoise4d(vec4(base.xyz, time + 1.0));
-    strength = smoothstep(-1.0, 1.0, strength);
+        // =======================================
+        // Fuerza de ruido (field strength)
+        // =======================================
+        float strength = simplexNoise4d(vec4(base.xyz, time + 1.0));
+        strength = smoothstep(-1.0, 1.0, strength);
 
-    float rand = base.w; // cada partícula tiene su "semilla"
+        float rand = base.w; // semilla aleatoria de cada partícula
 
-    // --- FLOW FIELD ---
-    // perturba la posición para romper patrones lineales
-    vec3 pos = particle.xyz * 1.0;
-    pos += vec3(
-        simplexNoise4d(vec4(particle.yzx, time )) * 0.1,
-        simplexNoise4d(vec4(particle.zxy, time )) * 0.1,
-        0.0
-    );
+        // =======================================
+        // Flow field - movimiento pseudo-orgánico
+        // =======================================
+        vec3 pos = particle.xyz;
+        pos += vec3(
+            simplexNoise4d(vec4(particle.yzx, time)) * 0.1,
+            simplexNoise4d(vec4(particle.zxy, time)) * 0.1,
+            0.0
+        );
 
-    vec3 flowField = vec3(
-        simplexNoise4d(vec4(pos.xyz + rand, time)),
-        simplexNoise4d(vec4(pos.yzx + rand, time)),
-        simplexNoise4d(vec4(pos.zxy + rand, time))
-    );
+        vec3 flowField = vec3(
+            simplexNoise4d(vec4(pos.xyz + rand, time)),
+            simplexNoise4d(vec4(pos.yzx + rand, time)),
+            simplexNoise4d(vec4(pos.zxy + rand, time))
+        );
+        flowField = normalize(flowField);
 
-    flowField = normalize(flowField);
+        // =======================================
+        // Falloff radial (fuerza menor en los bordes)
+        // =======================================
+        float radius = length(particle.xy);
+        float falloff = smoothstep(4.5, 0.0, radius); // 1 en centro, 0 en borde
 
-    // --- FALLOFF RADIAL ---
-    float radius = length(particle.xy);          // distancia al centro
-    float falloff = smoothstep(4.5, 0.0, radius); // 1 en centro, 0 en borde
+        // =======================================
+        // Deformaciones orgánicas
+        // =======================================
+        float edge = 0.1 + smoothstep(0.5, 1.0, radius); // 0 en centro, 1 en borde
+        float angle = atan(particle.y, particle.x);
 
-    // --- DEFORMACIÓN "ORGÁNICA" ---
-    float edge =  0.1 + smoothstep(0.5, 1.0, radius);         // 0 en centro, 1 en bordes
+        // Ruido extra para romper simetría
+        float n = simplexNoise4d(vec4(particle.xy * 2.0, time, rand));
 
-    // dirección angular de la partícula
-    float angle = atan(particle.y, particle.x);
+        // Onda que gira alrededor del centro
+        float wave = sin(angle * 5.0 + time * -3.5 + rand * 1.0) * 0.003;
 
-    // --- DEFORMACIÓN "ORGÁNICA GIRATORIA" ---
-    // ruido para romper simetría
-    float n = simplexNoise4d(vec4(particle.xy * 2.0, time, rand));  
+        // Solo en bordes
+        particle.xy += normalize(particle.xy) * wave * edge;
 
-    // onda que se mueve en ángulo (va girando)
-    float wave =  sin(angle * 5.0 + time * -3.5 + rand * 1.0) * 0.003;
+        // Aplica el flowfield con atenuación radial
+        particle.xyz += flowField * 0.025 * falloff;
 
-    // aplicar solo en bordes
-    particle.xy += normalize(particle.xy) * wave * edge;
+        // =======================================
+        // Interacción con el mouse
+        // =======================================
+        float dist = length(particle.xy - uMouse.xy);
+        vec2 dir = normalize(particle.xy - uMouse.xy);
+        float force = smoothstep(3.5, 0.0, dist); // 1 cerca del mouse
+        particle.xy += dir * force * 0.04;
 
-    // aplica el flowfield con atenuación radial
-    particle.xyz += flowField * 0.025 * falloff;
-
-
-    float dist = length(particle.xy - uMouse.xy);
-    vec2 dir = normalize(particle.xy - uMouse.xy);
-    float force = smoothstep(3.5, 0.0, dist);
-    particle.xy += dir * force * 0.04 ;
-
-    // --- DECAY ---
-    particle.a += 0.02;
+        // =======================================
+        // Decay - envejecimiento de la partícula
+        // =======================================
+        particle.a += 0.02;
     }
 
+    // Guardar el nuevo estado en la textura
     gl_FragColor = particle;
 }
